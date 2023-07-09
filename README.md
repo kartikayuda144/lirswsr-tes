@@ -1,0 +1,2 @@
+# lirswsr tes
+ implentasi lirswsr
