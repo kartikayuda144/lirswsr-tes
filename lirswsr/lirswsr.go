@@ -18,7 +18,7 @@ type (
 		Operation string
 		DirtyPage bool
 		ColdFlag  bool
-		Access    int
+		access    int
 	}
 	LIRSWSR struct {
 		cacheSize    int
@@ -61,7 +61,6 @@ func (LIRSWSRObject *LIRSWSR) Get(trace simulator.Trace) (err error) {
 	op := trace.Op
 	// if op == "W" {
 	// 	LIRSWSRObject.writeCount++
-	// }
 
 	if len(LIRSWSRObject.LIR) < LIRSWSRObject.LIRSize {
 		// LIR is not full; there is space in cache
@@ -103,17 +102,14 @@ func (LIRSWSRObject *LIRSWSR) handleLIRBlock(block int, op string) (err error) {
 	LIRSWSRObject.addToStack(block, op)
 	LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
 		ColdFlag: true, // reset as cold
-		Access:   0,    // re-Initialize access count
+		access:   0,    // re-Initialize access count
 	})
-	//Increment the write count if the accessed block is a dirty page
-	// if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok && blockInfo.(*BlockInfo).DirtyPage {
-	// 	LIRSWSRObject.writeCount++ // Increment the write count
-	// }
+	LIRSWSRObject.incrementAccess(block)
 	return nil
 }
 
 func (LIRSWSRObject *LIRSWSR) handleHIRResidentBlock(block int, op string) {
-
+	LIRSWSRObject.hit += 1
 	if _, ok := LIRSWSRObject.orderedStack.Get(block); ok { //if x block is in stack, move to LIR
 
 		LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
@@ -121,11 +117,12 @@ func (LIRSWSRObject *LIRSWSR) handleHIRResidentBlock(block int, op string) {
 		LIRSWSRObject.condition1(true)      //check condition 1 with value true (because HIRresident)
 	} else {
 		// condition2: block is not in stack, move to end of list
-		//LIRSWSRObject.condition1(true)
 		LIRSWSRObject.orderedList.MoveLast(block)
+		LIRSWSRObject.condition1(true)
 
 	}
 	LIRSWSRObject.addToStack(block, op) // requested x block added to top of the stack
+	LIRSWSRObject.incrementAccess(block)
 }
 
 func (LIRSWSRObject *LIRSWSR) handleHIRNonResidentBlock(block int, op string) {
@@ -136,13 +133,17 @@ func (LIRSWSRObject *LIRSWSR) handleHIRNonResidentBlock(block int, op string) {
 		LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
 		LIRSWSRObject.removeFromList(block) //delete the x block from list q
 		LIRSWSRObject.condition3(true)      //check condition 2 with value true (because HIR non resident)
+
 	} else {
 		LIRSWSRObject.makeHIR(block)
-		// LIRSWSRObject.orderedList.Set(block, 1)
-		// LIRSWSRObject.orderedList.MoveLast(block)
-		//LIRSWSRObject.condition3(true)
+
 	}
 	LIRSWSRObject.addToStack(block, op) // the requested x block the top of the stack
+	LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
+		ColdFlag: true, // reset as cold
+		//	access:   0,    // re-Initialize access count
+	})
+	LIRSWSRObject.incrementAccess(block)
 }
 
 func (LIRSWSRObject *LIRSWSR) addToList(block int, op string) {
@@ -157,7 +158,7 @@ func (LIRSWSRObject *LIRSWSR) addToList(block int, op string) {
 			Operation: op,
 			DirtyPage: true, // Set as dirty page
 			ColdFlag:  true, // Set as cold
-			Access:    0,    // Initialize access count
+			access:    0,    // Initialize access count
 		})
 	} else {
 		LIRSWSRObject.orderedList.Set(block, &BlockInfo{
@@ -165,39 +166,33 @@ func (LIRSWSRObject *LIRSWSR) addToList(block int, op string) {
 			Operation: op,
 			DirtyPage: false, // Set as clean page
 			ColdFlag:  true,  // Set as cold
-			Access:    0,     // Initialize access count
+			access:    0,     // Initialize access count
 		})
-		//LIRSWSRObject.orderedList.Set(block, 1)
 	}
 }
 
 func (LIRSWSRObject *LIRSWSR) addToStack(block int, op string) {
-	if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok {
-		blockInfo.(*BlockInfo).Access++
+	if _, ok := LIRSWSRObject.orderedStack.Get(block); ok {
 		LIRSWSRObject.orderedStack.MoveLast(block)
 		return
 
 	}
 	// Check if the block is introduced for write request for the first time or if it is a dirty page
-	if op == "W" {
-		LIRSWSRObject.writeCount++ // Increment the write count
-		LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
-			Address:   block,
-			Operation: op,
-			DirtyPage: true, // Set as dirty page
-			ColdFlag:  true, // Set as cold
-			Access:    0,    // Initialize access count
-		})
-	} else {
-		LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
-			Address:   block,
-			Operation: op,
-			DirtyPage: false, // Set as clean page
-			ColdFlag:  true,  // Set as cold
-			Access:    0,     // Initialize access count
-		})
+	blockInfo := &BlockInfo{
+		Address:   block,
+		Operation: op,
+		ColdFlag:  true, // Set as cold
+		access:    0,    // Initialize access count
 	}
 
+	if op == "W" {
+		blockInfo.DirtyPage = true // Set DirtyPage to true for write operation
+		LIRSWSRObject.writeCount++ // Increment the write count
+	} else {
+		blockInfo.DirtyPage = false // Set DirtyPage to false for other operations
+	}
+
+	LIRSWSRObject.orderedStack.Set(block, blockInfo)
 }
 
 func (LIRSWSRObject *LIRSWSR) removeFromList(block int) {
@@ -214,21 +209,6 @@ func (LIRSWSRObject *LIRSWSR) makeHIR(block int) {
 	LIRSWSRObject.HIR[block] = 1
 }
 
-// // condition1: move the LIR block in the bottom of stack S to the end of list Q with its status changed to HIR
-// func (LIRSWSRObject *LIRSWSR) condition1(removeLIR bool) (err error) {
-// 	key, _, ok := LIRSWSRObject.orderedStack.PopFirst() //LIR block bottom stack popped out with pop first
-// 	if !ok {                                            //check if stack !ok meaning stack empty
-// 		return errors.New("orderedStack is empty")
-// 	}
-// 	if removeLIR { //if removeLIR true do below
-// 		LIRSWSRObject.makeHIR(key.(int))        //change bottom stack the status into HIR
-// 		LIRSWSRObject.orderedList.Set(key, 1)   //make the block
-// 		LIRSWSRObject.orderedList.MoveLast(key) //set the block to the last of the list
-// 	}
-// 	LIRSWSRObject.stackPruning() //call pruning for tests the next bottom most page
-// 	return nil
-// }
-
 func (LIRSWSRObject *LIRSWSR) condition1(removeLIR bool) (err error) {
 	key, _, ok := LIRSWSRObject.orderedStack.PopFirst()
 	if !ok {
@@ -237,17 +217,17 @@ func (LIRSWSRObject *LIRSWSR) condition1(removeLIR bool) (err error) {
 
 	if removeLIR {
 		block := key.(int)
-		if LIRSWSRObject.isBlockDirty(block) || LIRSWSRObject.isBlockCold(block) {
+		if LIRSWSRObject.isBlockColdDirty(block) || LIRSWSRObject.isColdFlag(block) {
 			// Clean page or cold-dirty page moves to the end of the list Q
-			LIRSWSRObject.hit += 1
 			LIRSWSRObject.makeHIR(block)
 			LIRSWSRObject.orderedList.Set(block, 1)
 			LIRSWSRObject.orderedList.MoveLast(block)
 		} else {
-			// Not-cold dirty page in the bottom of the stack S is moved to the top with Cold flag set
+			//Not-cold dirty page in the bottom of the stack S is moved to the top with Cold flag set
+			LIRSWSRObject.miss += 1
 			LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
 				ColdFlag: true, // Set as cold
-				Access:   0,    // Initialize access count
+				access:   0,    // Initialize access count
 			})
 			LIRSWSRObject.orderedStack.MoveLast(block)
 		}
@@ -256,6 +236,7 @@ func (LIRSWSRObject *LIRSWSR) condition1(removeLIR bool) (err error) {
 	LIRSWSRObject.stackPruning()
 	return nil
 }
+
 func (LIRSWSRObject *LIRSWSR) condition3(removeLIR bool) (err error) {
 	key, _, ok := LIRSWSRObject.orderedStack.PopFirst()
 	if !ok {
@@ -264,17 +245,17 @@ func (LIRSWSRObject *LIRSWSR) condition3(removeLIR bool) (err error) {
 
 	if removeLIR {
 		block := key.(int)
-		if LIRSWSRObject.isBlockDirty(block) || LIRSWSRObject.isBlockCold(block) {
+		if LIRSWSRObject.isBlockColdDirty(block) || LIRSWSRObject.isColdFlag(block) {
 			// Clean page or cold-dirty page moves to the end of the list Q
-			//LIRSWSRObject.hit += 1
 			LIRSWSRObject.makeHIR(block)
 			LIRSWSRObject.orderedList.Set(block, 1)
 			LIRSWSRObject.orderedList.MoveLast(block)
 		} else {
 			// Not-cold dirty page in the bottom of the stack S is moved to the top with Cold flag set
+			LIRSWSRObject.miss += 1
 			LIRSWSRObject.orderedStack.Set(block, &BlockInfo{
 				ColdFlag: true, // Set as cold
-				Access:   0,    // Initialize access count
+				access:   0,    // Initialize access count
 			})
 			LIRSWSRObject.orderedStack.MoveLast(block)
 		}
@@ -294,25 +275,38 @@ func (LIRSWSRObject *LIRSWSR) stackPruning() {
 	}
 }
 
-func (LIRSWSRObject *LIRSWSR) isBlockCold(block int) bool {
+func (LIRSWSRObject *LIRSWSR) isColdFlag(block int) bool {
 	if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok {
-		accessCount := blockInfo.(*BlockInfo).Access
+		accessCount := blockInfo.(*BlockInfo).access
 		return accessCount < 2
 	}
 	return false
 }
-func (LIRSWSRObject *LIRSWSR) isBlockDirty(block int) bool {
+func (LIRSWSRObject *LIRSWSR) isDirtyPage(block int) bool {
 	if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok {
 		return blockInfo.(*BlockInfo).DirtyPage
 	}
 	return false
 }
 
+func (LIRSWSRObject *LIRSWSR) isBlockColdDirty(block int) bool {
+	if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok {
+		return blockInfo.(*BlockInfo).ColdFlag && blockInfo.(*BlockInfo).DirtyPage
+	}
+	return false
+}
+
+func (LIRSWSRObject *LIRSWSR) incrementAccess(block int) {
+	if blockInfo, ok := LIRSWSRObject.orderedStack.Get(block); ok {
+		blockInfo.(*BlockInfo).access++
+	}
+}
+
 func (LIRSWSRObject *LIRSWSR) PrintToFile(file *os.File, start time.Time) (err error) {
 	duration := time.Since(start)
 	hitRatio := 100 * float32(float32(LIRSWSRObject.hit)/float32(LIRSWSRObject.hit+LIRSWSRObject.miss))
 	result := fmt.Sprintf(`_______________________________________________________
-LIRSWSRmendekatibenar
+LIRSWSRmendekatibenar fungsi checker clean page bottom stack move end of the list dihilangkan
 cache size : %v
 cache hit : %v
 cache miss : %v
