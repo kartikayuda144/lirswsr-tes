@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"golang/simulator"
-
+	// "github.com/esaiy/golang-lirs/simulator"
 	"github.com/secnot/orderedmap"
 )
 
@@ -23,7 +23,7 @@ type LIRS struct {
 	orderedList  *orderedmap.OrderedMap
 	LIR          map[interface{}]int
 	HIR          map[interface{}]int
-	cache        map[interface{}]bool
+	// cache        map[interface{}]bool
 }
 
 func NewLIRS(cacheSize, HIRSize int) *LIRS {
@@ -43,24 +43,28 @@ func NewLIRS(cacheSize, HIRSize int) *LIRS {
 		orderedList:  orderedmap.NewOrderedMap(),
 		LIR:          make(map[interface{}]int, LIRCapacity),
 		HIR:          make(map[interface{}]int, HIRCapacity),
-		cache:        make(map[interface{}]bool, cacheSize),
+		// cache:        make(map[interface{}]bool, cacheSize),
 	}
 }
 
 func (LIRSObject *LIRS) Get(trace simulator.Trace) (err error) {
 	block := trace.Addr
 	op := trace.Op
-	if op == "W" {
-		LIRSObject.writeCount++
-	}
+	// if op == "W" {
+	// 	LIRSObject.writeCount++
+	// }
 
 	if len(LIRSObject.LIR) < LIRSObject.LIRSize {
 		// LIR is not full; there is space in cache
 		LIRSObject.miss += 1
+		// Tambahan
+		LIRSObject.writeCount++
 		if _, ok := LIRSObject.LIR[block]; ok {
 			// block is in LIR, not a miss
 			LIRSObject.miss -= 1
 			LIRSObject.hit += 1
+			// Tambahan
+			LIRSObject.writeCount--
 		}
 		LIRSObject.addToStack(block)
 		LIRSObject.makeLIR(block)
@@ -70,14 +74,43 @@ func (LIRSObject *LIRS) Get(trace simulator.Trace) (err error) {
 	if _, ok := LIRSObject.LIR[block]; ok {
 		// hit, block is in LIR
 		LIRSObject.handleLIRBlock(block)
+		// Tambahan 2
+		if op == "W" {
+			LIRSObject.writeCount++
+		}
 	} else if _, ok := LIRSObject.orderedList.Get(block); ok {
 		// hit, block is HIR resident
 		LIRSObject.handleHIRResidentBlock(block)
+		// Tambahan 2
+		if op == "W" {
+			LIRSObject.writeCount++
+		}
 	} else {
 		// miss, blok is HIR non resident
 		LIRSObject.handleHIRNonResidentBlock(block)
 	}
 	return nil
+}
+
+func (LIRSObject *LIRS) PrintToFile(file *os.File, start time.Time) (err error) {
+	duration := time.Since(start)
+	hitRatio := 100 * float32(float32(LIRSObject.hit)/float32(LIRSObject.hit+LIRSObject.miss))
+	result := fmt.Sprintf(`_______________________________________________________
+LIRS
+cache size : %v
+cache hit : %v
+cache miss : %v
+hit ratio : %v
+list size : %v
+stack size : %v
+lir capacity: %v
+hir capacity: %v
+write count : %v
+duration : %v
+!LIRS|%v|%v|%v
+`, LIRSObject.cacheSize, LIRSObject.hit, LIRSObject.miss, hitRatio, LIRSObject.orderedList.Len(), LIRSObject.orderedStack.Len(), LIRSObject.LIRSize, LIRSObject.HIRSize, LIRSObject.writeCount, duration.Seconds(), LIRSObject.cacheSize, LIRSObject.hit, LIRSObject.hit+LIRSObject.miss)
+	_, err = file.WriteString(result)
+	return err
 }
 
 func (LIRSObject *LIRS) handleLIRBlock(block int) (err error) {
@@ -86,9 +119,10 @@ func (LIRSObject *LIRS) handleLIRBlock(block int) (err error) {
 	if !ok {
 		return errors.New("orderedStack is empty")
 	}
-	if key.(int) == block { // block x is in LIR and at the bottom of the stack
-
-		LIRSObject.condition1(false) // do stack pruning
+	if key.(int) == block {
+		// block is in LIR and at the bottom of the stack
+		// do stack pruning
+		LIRSObject.stackPrunning(false)
 	}
 	LIRSObject.addToStack(block)
 	return nil
@@ -97,12 +131,12 @@ func (LIRSObject *LIRS) handleLIRBlock(block int) (err error) {
 func (LIRSObject *LIRS) handleHIRResidentBlock(block int) {
 	LIRSObject.hit += 1
 	if _, ok := LIRSObject.orderedStack.Get(block); ok {
-
-		LIRSObject.makeLIR(block)        // block x is in stack, move to LIR
-		LIRSObject.removeFromList(block) // block x is in stack, remove from List Q
-		LIRSObject.condition1(true)
+		// block is in stack, move to LIR
+		LIRSObject.makeLIR(block)
+		LIRSObject.removeFromList(block)
+		LIRSObject.stackPrunning(true)
 	} else {
-		// condition2: block is not in stack, move to end of list
+		// block is not in stack, move to end of list
 		LIRSObject.orderedList.MoveLast(block)
 	}
 	LIRSObject.addToStack(block)
@@ -110,14 +144,15 @@ func (LIRSObject *LIRS) handleHIRResidentBlock(block int) {
 
 func (LIRSObject *LIRS) handleHIRNonResidentBlock(block int) {
 	LIRSObject.miss += 1
+	// Tambahan
+	LIRSObject.writeCount++
 	LIRSObject.addToList(block)
 	if _, ok := LIRSObject.orderedStack.Get(block); ok {
-
-		LIRSObject.makeLIR(block)        // block x is in stack, move to LIR
-		LIRSObject.removeFromList(block) // block x is in stack, remove from List Q
-		LIRSObject.condition1(true)
+		// block is in stack, move to LIR
+		LIRSObject.makeLIR(block)
+		LIRSObject.removeFromList(block)
+		LIRSObject.stackPrunning(true)
 	} else {
-		//condition2:block is not in stack, move to end of list
 		LIRSObject.makeHIR(block)
 	}
 	LIRSObject.addToStack(block)
@@ -153,48 +188,23 @@ func (LIRSObject *LIRS) makeHIR(block int) {
 	delete(LIRSObject.LIR, block)
 }
 
-// condition1: move the LIR block in the bottom of stack S to the end of list Q with its status changed to HIR
-func (LIRSObject *LIRS) condition1(removeLIR bool) (err error) {
+func (LIRSObject *LIRS) stackPrunning(removeLIR bool) (err error) {
 	key, _, ok := LIRSObject.orderedStack.PopFirst()
 	if !ok {
 		return errors.New("orderedStack is empty")
 	}
 	if removeLIR {
-		LIRSObject.makeHIR(key.(int))        //LIR block bottom becoming HIR
-		LIRSObject.orderedList.Set(key, 1)   //inserted to list
-		LIRSObject.orderedList.MoveLast(key) //inserted to end of the list
+		LIRSObject.makeHIR(key.(int))
+		LIRSObject.orderedList.Set(key, 1)
+		LIRSObject.orderedList.MoveLast(key)
 	}
-	LIRSObject.stackPruning() //call pruning
-	return nil
-}
 
-func (LIRSObject *LIRS) stackPruning() { //checking the next most bottom of the page
 	iter := LIRSObject.orderedStack.Iter()
 	for k, _, ok := iter.Next(); ok; k, _, ok = iter.Next() {
-		if _, ok := LIRSObject.LIR[k]; ok { //check if  k block is LIR
-			break //found LIR stop
+		if _, ok := LIRSObject.LIR[k]; ok {
+			break
 		}
-		LIRSObject.orderedStack.PopFirst() // if LIR not found, pop from the bottom of the stack
+		LIRSObject.orderedStack.PopFirst()
 	}
-}
-
-func (LIRSObject *LIRS) PrintToFile(file *os.File, start time.Time) (err error) {
-	duration := time.Since(start)
-	hitRatio := 100 * float32(float32(LIRSObject.hit)/float32(LIRSObject.hit+LIRSObject.miss))
-	result := fmt.Sprintf(`_______________________________________________________
-LIRS
-cache size : %v
-cache hit : %v
-cache miss : %v
-hit ratio : %v
-list size : %v
-stack size : %v
-lir capacity: %v
-hir capacity: %v
-write count : %v
-duration : %v
-!LIRS|%v|%v|%v
-`, LIRSObject.cacheSize, LIRSObject.hit, LIRSObject.miss, hitRatio, LIRSObject.orderedList.Len(), LIRSObject.orderedStack.Len(), LIRSObject.LIRSize, LIRSObject.HIRSize, LIRSObject.writeCount, duration.Seconds(), LIRSObject.cacheSize, LIRSObject.hit, LIRSObject.hit+LIRSObject.miss)
-	_, err = file.WriteString(result)
-	return err
+	return nil
 }

@@ -59,9 +59,9 @@ func NewLIRSWSR(cacheSize, HIRSize int) *LIRSWSR {
 func (LIRSWSRObject *LIRSWSR) Get(trace simulator.Trace) (err error) {
 	block := trace.Addr
 	op := trace.Op
-	// if op == "W" {
-	// 	LIRSWSRObject.writeCount++
-
+	if op == "W" {
+		LIRSWSRObject.writeCount++
+	}
 	if len(LIRSWSRObject.LIR) < LIRSWSRObject.LIRSize {
 		// LIR is not full; there is space in cache
 		LIRSWSRObject.miss += 1
@@ -69,6 +69,7 @@ func (LIRSWSRObject *LIRSWSR) Get(trace simulator.Trace) (err error) {
 			// block is in LIR, not a miss
 			LIRSWSRObject.miss -= 1
 			LIRSWSRObject.hit += 1
+			LIRSWSRObject.writeCount--
 		}
 		LIRSWSRObject.addToStack(block, op)
 		LIRSWSRObject.makeLIR(block)
@@ -112,9 +113,9 @@ func (LIRSWSRObject *LIRSWSR) handleHIRResidentBlock(block int, op string) {
 	LIRSWSRObject.hit += 1
 	if _, ok := LIRSWSRObject.orderedStack.Get(block); ok { //if x block is in stack, move to LIR
 
-		LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
-		LIRSWSRObject.removeFromList(block) //delete the x block from list q
-		LIRSWSRObject.condition1(true)      //check condition 1 with value true (because HIRresident)
+		LIRSWSRObject.makeLIR(block) // change x block to LIR with makeLIR
+		// LIRSWSRObject.removeFromList(block) //delete the x block from list q
+		LIRSWSRObject.condition1(true) //check condition 1 with value true (because HIRresident)
 	} else {
 		// condition2: block is not in stack, move to end of list
 		LIRSWSRObject.orderedList.MoveLast(block)
@@ -130,9 +131,9 @@ func (LIRSWSRObject *LIRSWSR) handleHIRNonResidentBlock(block int, op string) {
 	LIRSWSRObject.addToList(block, op)                      //insert the x block to the list
 	if _, ok := LIRSWSRObject.orderedStack.Get(block); ok { // block is in stack, move to LIR
 
-		LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
-		LIRSWSRObject.removeFromList(block) //delete the x block from list q
-		LIRSWSRObject.condition3(true)      //check condition 2 with value true (because HIR non resident)
+		// LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
+		// LIRSWSRObject.removeFromList(block) //delete the x block from list q
+		LIRSWSRObject.condition3(true) //check condition 2 with value true (because HIR non resident)
 
 	} else {
 		LIRSWSRObject.makeHIR(block)
@@ -152,7 +153,7 @@ func (LIRSWSRObject *LIRSWSR) addToList(block int, op string) {
 	}
 
 	if op == "W" {
-		LIRSWSRObject.writeCount++ // Increment the write count
+		//LIRSWSRObject.writeCount++ // Increment the write count
 		LIRSWSRObject.orderedList.Set(block, &BlockInfo{
 			Address:   block,
 			Operation: op,
@@ -187,7 +188,7 @@ func (LIRSWSRObject *LIRSWSR) addToStack(block int, op string) {
 
 	if op == "W" {
 		blockInfo.DirtyPage = true // Set DirtyPage to true for write operation
-		LIRSWSRObject.writeCount++ // Increment the write count
+		//LIRSWSRObject.writeCount++ // Increment the write count
 	} else {
 		blockInfo.DirtyPage = false // Set DirtyPage to false for other operations
 	}
@@ -216,9 +217,12 @@ func (LIRSWSRObject *LIRSWSR) condition1(removeLIR bool) (err error) {
 	}
 
 	if removeLIR {
-		block := key.(int)
+		LIRSWSRObject.writeCount++
+		block := key.(int) //check the lir page bottom of the stack
 		if LIRSWSRObject.isBlockColdDirty(block) || LIRSWSRObject.isColdFlag(block) {
 			// Clean page or cold-dirty page moves to the end of the list Q
+			LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
+			LIRSWSRObject.removeFromList(block) //delete the x block from list q
 			LIRSWSRObject.makeHIR(block)
 			LIRSWSRObject.orderedList.Set(block, 1)
 			LIRSWSRObject.orderedList.MoveLast(block)
@@ -247,6 +251,8 @@ func (LIRSWSRObject *LIRSWSR) condition3(removeLIR bool) (err error) {
 		block := key.(int)
 		if LIRSWSRObject.isBlockColdDirty(block) || LIRSWSRObject.isColdFlag(block) {
 			// Clean page or cold-dirty page moves to the end of the list Q
+			LIRSWSRObject.makeLIR(block)        // change x block to LIR with makeLIR
+			LIRSWSRObject.removeFromList(block) //delete the x block from list q
 			LIRSWSRObject.makeHIR(block)
 			LIRSWSRObject.orderedList.Set(block, 1)
 			LIRSWSRObject.orderedList.MoveLast(block)
@@ -306,7 +312,7 @@ func (LIRSWSRObject *LIRSWSR) PrintToFile(file *os.File, start time.Time) (err e
 	duration := time.Since(start)
 	hitRatio := 100 * float32(float32(LIRSWSRObject.hit)/float32(LIRSWSRObject.hit+LIRSWSRObject.miss))
 	result := fmt.Sprintf(`_______________________________________________________
-LIRSWSRmendekatibenar fungsi checker clean page bottom stack move end of the list dihilangkan
+LIRSWSRVERSIA
 cache size : %v
 cache hit : %v
 cache miss : %v
